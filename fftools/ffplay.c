@@ -1194,8 +1194,8 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
     static int  max_main_bitrate = 0, max_aux_bitrate = 0, avg_main_bitrate = 0, avg_aux_bitrate = 0;
     //int font_w_scale_firstline = 24, font_w_scale_secondline = 24;
     //int font_height_firstline = 30, font_height_secondline = 30;
-    int font_w_scale_firstline = 25, font_w_scale_secondline = 25;
-    int font_height_firstline = 35, font_height_secondline = 35;
+    int font_w_scale_firstline = 20, font_w_scale_secondline = 20;
+    int font_height_firstline = 24, font_height_secondline = 24;
 
     vp = frame_queue_peek_last(&is->pictq);
     elapse_time = vp->pts - is->first_pts;
@@ -1370,14 +1370,14 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         
         if (is->show_info_type == SHOW_HINT && elapse_time < 20.0)
         {
-            SDL_Color color = {250, 250, 250};
+            SDL_Color color = {0x00, 0xFA, 0xFF};
             SDL_Surface *surf = TTF_RenderUTF8_Blended(is->font, hint_line, color);
             SDL_Texture *text = SDL_CreateTextureFromSurface(renderer, surf);
             SDL_FreeSurface(surf);
             left_display_y = rect.y + 5;
             font_rect.x = rect.x + 10;
             font_rect.y = left_display_y;
-            font_rect.w = font_w_scale_firstline * strlen(hint_line) / 2;
+            font_rect.w = font_w_scale_firstline * strlen(hint_line) / 3;
             font_rect.h = font_height_firstline;
             SDL_RenderCopy(renderer, text, NULL, &font_rect);
             if (text) // TODO: remove this frequent create and destroy
@@ -1389,7 +1389,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             left_display_y += font_height_firstline + 5;
             font_rect.x = rect.x + 10;
             font_rect.y = left_display_y; //rect.y + 36;
-            font_rect.w = font_w_scale_firstline * strlen(key_binding) / 2;
+            font_rect.w = font_w_scale_firstline * strlen(key_binding) / 3;
             font_rect.h = font_height_firstline;
             SDL_RenderCopy(renderer, text, NULL, &font_rect);
             if (text) // TODO: remove this frequent create and destroy
@@ -1398,7 +1398,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         // Show Left Title Information
         else if (is->show_info_type >= SHOW_TITLE)
         {
-            SDL_Color color = {250, 250, 0};
+            SDL_Color color = {0x00, 0xFA, 0xFF};
             SDL_Surface *surf = TTF_RenderUTF8_Blended(is->font, left_title, color);
             SDL_Texture *text = SDL_CreateTextureFromSurface(renderer, surf);
             int left_title_width = font_w_scale_firstline * strlen(left_title) / 2;
@@ -1465,7 +1465,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         // Show Right Title Information
         if (is->font != NULL && is->show_info_type >= SHOW_TITLE)
         {
-            SDL_Color color = {250, 250, 0};
+            SDL_Color color = {0x00, 0xFA, 0xFF};
             SDL_Surface *surf = TTF_RenderUTF8_Blended(is->font, right_title, color);
             SDL_Texture *text = SDL_CreateTextureFromSurface(renderer, surf);
             int right_title_width = font_w_scale_firstline * strlen(right_title) / 2;
