@@ -28,6 +28,11 @@ A video compare tool based on ffmpeg-4.2.3
 ## 2 本项目使用SDL_ttf在屏幕上输出
 * sdl_ttf下载地址： http://www.libsdl.org/projects/SDL_ttf/release/SDL2_ttf-devel-2.0.15-mingw.tar.gz  
 * 下载后，解压，将文件夹SDL2_ttf-2.0.15\x86_64-w64-mingw32\ 与 C:\msys64\mingw64 合并。  
+* 在链接阶段，需要增加选项 -lSDL2_ttf 
+* 如果要在windows的cmd环境中运行，则需要将如下库拷贝到ffplay.exe所在目录：  
+  C:\msys64\mingw64\bin\SDL2_ttf.dll  
+  C:\msys64\mingw64\bin\libfreetype-6.dll  
+  C:\msys64\mingw64\bin\zlib1.dll
 
    
 ## 3 编译(代码目录为F:ffmpeg-4.2.3-VCmpTool)  
