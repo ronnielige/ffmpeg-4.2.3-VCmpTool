@@ -1194,8 +1194,8 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
     static int  max_main_bitrate = 0, max_aux_bitrate = 0, avg_main_bitrate = 0, avg_aux_bitrate = 0;
     //int font_w_scale_firstline = 24, font_w_scale_secondline = 24;
     //int font_height_firstline = 30, font_height_secondline = 30;
-    int font_w_scale_firstline = 20, font_w_scale_secondline = 20;
-    int font_height_firstline = 24, font_height_secondline = 24;
+    int font_w_scale_firstline = 50, font_w_scale_secondline = 50;
+    int font_height_firstline = 60, font_height_secondline = 60;
 
     vp = frame_queue_peek_last(&is->pictq);
     elapse_time = vp->pts - is->first_pts;
@@ -1209,7 +1209,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         is->displayed_frames++;
         is->disp_frames_tot_bits += main_pkt_size * 8;
     }
-    sprintf(left_detail, "Frame%lld: %07d bits,", is->displayed_frames, main_pkt_size * 8);
+    //sprintf(left_detail, "Frame%lld: %07d bits,", is->displayed_frames, main_pkt_size * 8);
     if(sl && is->displayed_frames && (is->displayed_frames % (int)is->frame_rate) == 0)
     {
         main_bitrate_interval = (is->disp_frames_tot_bits - is->last_disp_frames_tot_bits) / 1000;
@@ -1218,7 +1218,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         is->last_disp_frames_tot_bits = is->disp_frames_tot_bits;
     }
     //sprintf(left_detail + strlen(left_detail), "  es_bitrate: %06d kbps, max %06d kbps, avg %06d kbps", main_bitrate_interval, max_main_bitrate, avg_main_bitrate);
-    sprintf(left_detail + strlen(left_detail), "  avg %06d kbps", avg_main_bitrate);
+    sprintf(left_detail + strlen(left_detail), "码率: %06d kbps", main_bitrate_interval);
 
     if(aux_is)
     {
@@ -1232,7 +1232,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             aux_is->displayed_frames++;
             aux_is->disp_frames_tot_bits += aux_pkt_size * 8;
         }
-        sprintf(right_detail, "Frame%lld: %07d bits,", aux_is->displayed_frames, aux_pkt_size * 8);
+        //sprintf(right_detail, "Frame%lld: %07d bits,", aux_is->displayed_frames, aux_pkt_size * 8);
         if (aux_sl && aux_is->displayed_frames && (aux_is->displayed_frames % (int)aux_is->frame_rate) == 0)
         {
             aux_bitrate_interval = (aux_is->disp_frames_tot_bits - aux_is->last_disp_frames_tot_bits) / 1000;
@@ -1241,7 +1241,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             aux_is->last_disp_frames_tot_bits = aux_is->disp_frames_tot_bits;
         }
         //sprintf(right_detail + strlen(right_detail), "  es_bitrate: %06d kbps, max %06d kbps, avg %06d kbps", aux_bitrate_interval, max_aux_bitrate, avg_aux_bitrate);
-        sprintf(right_detail + strlen(right_detail), "  avg %06d kbps", avg_aux_bitrate);
+        sprintf(right_detail + strlen(right_detail), "码率: %06d kbps", aux_bitrate_interval);
 
         // set window title to show played time for each file
         if(!isnan(vp->pts) && !isnan(aux_vp->pts)) // raw bitstream may have no pts
@@ -1256,7 +1256,8 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             amm  = (ans % 3600) / 60;
             ass  = (ans % 60);
             ams  = 1000 * (aux_vp->pts - (ahh * 3600 + amm * 60 + ass));
-            sprintf(left_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
+            //sprintf(left_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
+            sprintf(left_title, "%s ", strrchr(is->filename, '\\') + 1);
             if(is->show_info_type == SHOW_TITLE)
                 sprintf(left_title + strlen(left_title), " (%s)", "Tab to show more");
             //else if(is->show_info_type == SHOW_DETAIL)
@@ -1266,8 +1267,9 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 sprintf(new_title, "%s %2d:%02d:%02d.%03d <------->  %s %2d:%02d:%02d.%03d", 
                         is->filename,   vhh, vmm, vss, vms, 
                         aux_is->filename, ahh, amm, ass, ams);
-                sprintf(right_title, "%s %2d:%02d:%02d.%03d", 
-                        strrchr(aux_is->filename, '\\') + 1, ahh, amm, ass, ams);
+                //sprintf(right_title, "%s %2d:%02d:%02d.%03d", 
+                //        strrchr(aux_is->filename, '\\') + 1, ahh, amm, ass, ams);
+                sprintf(right_title, "%s", strrchr(aux_is->filename, '\\') + 1);
             }
             SDL_SetWindowTitle(window, new_title);
         }
@@ -1297,8 +1299,11 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             vss  = (vns % 60);
             vms  = 1000 * (vp->pts - (vhh * 3600 + vmm * 60 + vss));
         }
-        sprintf(new_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
-        sprintf(left_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
+        //sprintf(new_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
+        //sprintf(left_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
+        sprintf(new_title, "%s ", strrchr(is->filename, '\\') + 1);
+        sprintf(left_title, "%s ", strrchr(is->filename, '\\') + 1);
+        
         if (is->show_info_type == SHOW_TITLE)
             sprintf(left_title + strlen(left_title), " (%s)", "Tab to show more");
         //else if (is->show_info_type == SHOW_DETAIL)
@@ -1413,16 +1418,16 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 SDL_DestroyTexture(text);
             if(is->show_info_type >= SHOW_DETAIL)
             {
-                surf = TTF_RenderUTF8_Blended(is->font, is->format_str, color);
-                text = SDL_CreateTextureFromSurface(renderer, surf);
-                SDL_FreeSurface(surf);
-                font_rect.x = rect.x + 10 + 10 + left_title_width;
-                font_rect.y = left_display_y;
-                font_rect.w = font_w_scale_firstline * strlen(is->format_str) / 2;
-                font_rect.h = font_height_firstline;
-                SDL_RenderCopy(renderer, text, NULL, &font_rect);
-                if (text) // TODO: remove this frequent create and destroy
-                    SDL_DestroyTexture(text);
+                //surf = TTF_RenderUTF8_Blended(is->font, is->format_str, color);
+                //text = SDL_CreateTextureFromSurface(renderer, surf);
+                //SDL_FreeSurface(surf);
+                //font_rect.x = rect.x + 10 + 10 + left_title_width;
+                //font_rect.y = left_display_y;
+                //font_rect.w = font_w_scale_firstline * strlen(is->format_str) / 2;
+                //font_rect.h = font_height_firstline;
+                //SDL_RenderCopy(renderer, text, NULL, &font_rect);
+                //if (text) // TODO: remove this frequent create and destroy
+                //    SDL_DestroyTexture(text);
 
                 //color.g = color.b = 0; 
                 surf = TTF_RenderUTF8_Blended(is->font, left_detail, color);
@@ -1479,16 +1484,16 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 SDL_DestroyTexture(text);
             if(is->show_info_type >= SHOW_DETAIL)
             {
-                surf = TTF_RenderUTF8_Blended(is->font, aux_is->format_str, color);
-                text = SDL_CreateTextureFromSurface(renderer, surf);
-                SDL_FreeSurface(surf);
-                font_rect.x = aux_rect.x + 10 + 10 + right_title_width;
-                font_rect.y = aux_rect.y + 5;
-                font_rect.w = font_w_scale_firstline * strlen(aux_is->format_str) / 2;
-                font_rect.h = font_height_firstline;
-                SDL_RenderCopy(renderer, text, NULL, &font_rect);
-                if (text) // TODO: remove this frequent create and destroy
-                    SDL_DestroyTexture(text);
+                //surf = TTF_RenderUTF8_Blended(is->font, aux_is->format_str, color);
+                //text = SDL_CreateTextureFromSurface(renderer, surf);
+                //SDL_FreeSurface(surf);
+                //font_rect.x = aux_rect.x + 10 + 10 + right_title_width;
+                //font_rect.y = aux_rect.y + 5;
+                //font_rect.w = font_w_scale_firstline * strlen(aux_is->format_str) / 2;
+                //font_rect.h = font_height_firstline;
+                //SDL_RenderCopy(renderer, text, NULL, &font_rect);
+                //if (text) // TODO: remove this frequent create and destroy
+                //    SDL_DestroyTexture(text);
 
                 //color.g = color.b = 0; 
                 surf = TTF_RenderUTF8_Blended(is->font, right_detail, color);
