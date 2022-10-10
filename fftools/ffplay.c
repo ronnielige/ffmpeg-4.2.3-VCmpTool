@@ -29,7 +29,6 @@
 #include <limits.h>
 #include <signal.h>
 #include <stdint.h>
-#include <string.h>
 
 #include "libavutil/avstring.h"
 #include "libavutil/eval.h"
@@ -68,7 +67,7 @@
 #include <conio.h>
 
 int ver_major = 1;
-int ver_minor = 13;
+int ver_minor = 16;
 
 const char program_name[] = "VCmpTool"; 
 const int program_birth_year = 2003;
@@ -140,6 +139,7 @@ typedef struct SampleList
 {
     int64_t pts;         // record pts
     int     pkt_size;    // record packet size
+    double  vbv_max_sub_min; // record vbv max - min(ms)
     struct SampleList* pPrev;
     struct SampleList* pNext;
 }SampleList;
@@ -339,8 +339,11 @@ typedef struct VideoState {
     int vert_split_pos;        // record vertical split line position
     int last_vert_split_pos;
     int mov_speed;             // set the move speed of the vertical split line
-    int left_mouse_bt_stat;    // stat of left mouse button: 0 - left mouse button up; 1 - left mouse button down
+    int left_mouse_bt_stat;    // stat of left mouse button:  0 - left  mouse button up; 1 -  left mouse button down
+    int right_mouse_bt_stat;   // stat of right mouse button: 0 - right mouse button up; 1 - right mouse button down
     int delay_frame_num;       // delay frame from start
+
+    int vbv_fullness;          // record vbv fullness in bits
 
     int      linesize[4];
 
@@ -366,8 +369,8 @@ static int default_width  = 640;
 static int default_height = 480;
 static int screen_width  = 0;
 static int screen_height = 0;
-static int screen_left = SDL_WINDOWPOS_CENTERED;
-static int screen_top = SDL_WINDOWPOS_CENTERED;
+static int screen_left = 0; //SDL_WINDOWPOS_CENTERED;
+static int screen_top = 0; //SDL_WINDOWPOS_CENTERED;
 static int audio_disable;
 static int video_disable;
 static int subtitle_disable;
@@ -407,9 +410,14 @@ static char *afilters = NULL;
 static int autorotate = 1;
 static int find_stream_info = 1;
 static int filter_nbthreads = 0;
+static SDL_Cursor*  hand_cursor = NULL;
+static SDL_Cursor* arrow_cursor = NULL;
+
+static int vbv_stat = 0;         // enable vbv stat, save frame bits into vbv.log, calculate vbv fullness
+static int vbv_bitrate = 1;      // bps, set vbv bitrate, default set to 1bps 
 
 /* current context */
-static int is_full_screen = 1;
+static int is_full_screen = 0;
 static int64_t audio_callback_time;
 
 static AVPacket flush_pkt;
@@ -1192,16 +1200,13 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
     SampleList* sl = NULL, *aux_sl = NULL;
     static int  main_pkt_size = 0, aux_pkt_size = 0, main_bitrate_interval = 0, aux_bitrate_interval; // static var for pause cases 
     static int  max_main_bitrate = 0, max_aux_bitrate = 0, avg_main_bitrate = 0, avg_aux_bitrate = 0;
-    //int font_w_scale_firstline = 24, font_w_scale_secondline = 24;
-    //int font_height_firstline = 30, font_height_secondline = 30;
-    int font_w_scale_firstline = 50, font_w_scale_secondline = 50;
-    int font_height_firstline = 60, font_height_secondline = 60;
 
     vp = frame_queue_peek_last(&is->pictq);
     elapse_time = vp->pts - is->first_pts;
 
     //printf("PopSampleList pts = %lld\n", vp->pts);
     PopSampleList(&is->sampleHeader, vp->frame->pts, &sl);
+
     if(sl) // not pause stat
     {
         main_pkt_size = sl->pkt_size;
@@ -1209,7 +1214,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         is->displayed_frames++;
         is->disp_frames_tot_bits += main_pkt_size * 8;
     }
-    //sprintf(left_detail, "Frame%lld: %07d bits,", is->displayed_frames, main_pkt_size * 8);
+    sprintf(left_detail, "Frame%lld: %07d bits,", is->displayed_frames, main_pkt_size * 8);
     if(sl && is->displayed_frames && (is->displayed_frames % (int)is->frame_rate) == 0)
     {
         main_bitrate_interval = (is->disp_frames_tot_bits - is->last_disp_frames_tot_bits) / 1000;
@@ -1217,8 +1222,9 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         avg_main_bitrate = is->disp_frames_tot_bits / (is->displayed_frames / (int)is->frame_rate) / 1000;
         is->last_disp_frames_tot_bits = is->disp_frames_tot_bits;
     }
-    //sprintf(left_detail + strlen(left_detail), "  es_bitrate: %06d kbps, max %06d kbps, avg %06d kbps", main_bitrate_interval, max_main_bitrate, avg_main_bitrate);
-    sprintf(left_detail + strlen(left_detail), "码率: %06d kbps", main_bitrate_interval);
+    sprintf(left_detail + strlen(left_detail), "  es_bitrate: %06d kbps, max %06d kbps, avg %06d kbps", main_bitrate_interval, max_main_bitrate, avg_main_bitrate);
+    if(vbv_stat && sl)
+        sprintf(left_detail + strlen(left_detail), ", vbv max - min %6.2f ms", sl->vbv_max_sub_min);
 
     if(aux_is)
     {
@@ -1232,7 +1238,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             aux_is->displayed_frames++;
             aux_is->disp_frames_tot_bits += aux_pkt_size * 8;
         }
-        //sprintf(right_detail, "Frame%lld: %07d bits,", aux_is->displayed_frames, aux_pkt_size * 8);
+        sprintf(right_detail, "Frame%lld: %07d bits,", aux_is->displayed_frames, aux_pkt_size * 8);
         if (aux_sl && aux_is->displayed_frames && (aux_is->displayed_frames % (int)aux_is->frame_rate) == 0)
         {
             aux_bitrate_interval = (aux_is->disp_frames_tot_bits - aux_is->last_disp_frames_tot_bits) / 1000;
@@ -1240,8 +1246,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             avg_aux_bitrate = aux_is->disp_frames_tot_bits / (aux_is->displayed_frames / (int)aux_is->frame_rate) / 1000;
             aux_is->last_disp_frames_tot_bits = aux_is->disp_frames_tot_bits;
         }
-        //sprintf(right_detail + strlen(right_detail), "  es_bitrate: %06d kbps, max %06d kbps, avg %06d kbps", aux_bitrate_interval, max_aux_bitrate, avg_aux_bitrate);
-        sprintf(right_detail + strlen(right_detail), "码率: %06d kbps", aux_bitrate_interval);
+        sprintf(right_detail + strlen(right_detail), "  es_bitrate: %06d kbps, max %06d kbps, avg %06d kbps", aux_bitrate_interval, max_aux_bitrate, avg_aux_bitrate);
 
         // set window title to show played time for each file
         if(!isnan(vp->pts) && !isnan(aux_vp->pts)) // raw bitstream may have no pts
@@ -1256,8 +1261,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             amm  = (ans % 3600) / 60;
             ass  = (ans % 60);
             ams  = 1000 * (aux_vp->pts - (ahh * 3600 + amm * 60 + ass));
-            //sprintf(left_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
-            sprintf(left_title, "%s ", strrchr(is->filename, '\\') + 1);
+            sprintf(left_title, "%s %2d:%02d:%02d.%03d", is->filename, vhh, vmm, vss, vms);
             if(is->show_info_type == SHOW_TITLE)
                 sprintf(left_title + strlen(left_title), " (%s)", "Tab to show more");
             //else if(is->show_info_type == SHOW_DETAIL)
@@ -1267,15 +1271,14 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 sprintf(new_title, "%s %2d:%02d:%02d.%03d <------->  %s %2d:%02d:%02d.%03d", 
                         is->filename,   vhh, vmm, vss, vms, 
                         aux_is->filename, ahh, amm, ass, ams);
-                //sprintf(right_title, "%s %2d:%02d:%02d.%03d", 
-                //        strrchr(aux_is->filename, '\\') + 1, ahh, amm, ass, ams);
-                sprintf(right_title, "%s", strrchr(aux_is->filename, '\\') + 1);
+                sprintf(right_title, "%s %2d:%02d:%02d.%03d", 
+                        aux_is->filename, ahh, amm, ass, ams);
             }
             SDL_SetWindowTitle(window, new_title);
         }
         else // if no pts, display frame number
         {
-            sprintf(left_title, "%s  %lld frm", strrchr(is->filename, '\\') + 1, vp->dec_frame_num);
+            sprintf(left_title, "%s  %lld frm", is->filename, vp->dec_frame_num);
             if(is->show_info_type == SHOW_TITLE)
                 sprintf(left_title + strlen(left_title), " (%s)", "Tab to show more");
             //else if(is->show_info_type == SHOW_DETAIL)
@@ -1283,7 +1286,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             if(input_filename[1])
             {
                 sprintf(new_title, "%s  %lld frm <------->  %s  %lld frm", is->filename, vp->dec_frame_num, aux_is->filename, aux_vp->dec_frame_num);
-                sprintf(right_title, "%s  %lld frm", strrchr(aux_is->filename, '\\') + 1, aux_vp->dec_frame_num);
+                sprintf(right_title, "%s  %lld frm", aux_is->filename, aux_vp->dec_frame_num);
             }
             SDL_SetWindowTitle(window, new_title);
         }
@@ -1299,17 +1302,17 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             vss  = (vns % 60);
             vms  = 1000 * (vp->pts - (vhh * 3600 + vmm * 60 + vss));
         }
-        //sprintf(new_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
-        //sprintf(left_title, "%s %2d:%02d:%02d.%03d", strrchr(is->filename, '\\') + 1, vhh, vmm, vss, vms);
-        sprintf(new_title, "%s ", strrchr(is->filename, '\\') + 1);
-        sprintf(left_title, "%s ", strrchr(is->filename, '\\') + 1);
-        
+        sprintf(new_title, "%s %2d:%02d:%02d.%03d", is->filename, vhh, vmm, vss, vms);
+        sprintf(left_title, "%s %2d:%02d:%02d.%03d", is->filename, vhh, vmm, vss, vms);
         if (is->show_info_type == SHOW_TITLE)
             sprintf(left_title + strlen(left_title), " (%s)", "Tab to show more");
         //else if (is->show_info_type == SHOW_DETAIL)
         //    sprintf(left_title + strlen(left_title), " (%s)", "Tab to clear");
     }
-    sprintf(key_binding, "快捷键:空格 - 暂停, f - 全屏, s - 帧进, 左/右方向键 - 快退快进, 鼠标右键 - 比例快进, q - 退出");
+    if(aux_is) // compare mode
+        sprintf(key_binding, "快捷键:空格 - 暂停, f/双击 - 全屏, q - 退出, 鼠标滚动 - 缩放窗口, s - 帧进, <-/-> - 快退快进, 按住鼠标右键拖动窗口，左键移动分割线， F1 - 左边帧进， F2 - 右边帧进， 单击右键 - 比例快进");
+    else       // normal  mode
+        sprintf(key_binding, "快捷键:空格 - 暂停, f/双击 - 全屏, q - 退出, 鼠标滚动 - 缩放窗口, s - 帧进, <-/-> - 快退快进, 按住鼠标左键/右键拖动窗口， 单击右键 - 比例快进 ");
 
     if (is->subtitle_st) {
         if (frame_queue_nb_remaining(&is->subpq) > 0) {
@@ -1372,18 +1375,17 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
     {
         int left_display_y = 0;
         char hint_line[100] = "按Tab键显示详细信息";
-        
-        if (is->show_info_type == SHOW_HINT && elapse_time < 20.0)
+        if (is->show_info_type == SHOW_HINT && (elapse_time < 20.0 || is->displayed_frames < 250))
         {
-            SDL_Color color = {0x00, 0xFA, 0xFF};
+            SDL_Color color = {250, 250, 250};
             SDL_Surface *surf = TTF_RenderUTF8_Blended(is->font, hint_line, color);
             SDL_Texture *text = SDL_CreateTextureFromSurface(renderer, surf);
             SDL_FreeSurface(surf);
             left_display_y = rect.y + 5;
             font_rect.x = rect.x + 10;
             font_rect.y = left_display_y;
-            font_rect.w = font_w_scale_firstline * strlen(hint_line) / 3;
-            font_rect.h = font_height_firstline;
+            font_rect.w = 11 * strlen(hint_line) / 2;
+            font_rect.h = 19;
             SDL_RenderCopy(renderer, text, NULL, &font_rect);
             if (text) // TODO: remove this frequent create and destroy
                 SDL_DestroyTexture(text);
@@ -1391,11 +1393,11 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             surf = TTF_RenderUTF8_Blended(is->font, key_binding, color);
             text = SDL_CreateTextureFromSurface(renderer, surf);
             SDL_FreeSurface(surf);
-            left_display_y += font_height_firstline + 5;
+            left_display_y += 20;
             font_rect.x = rect.x + 10;
             font_rect.y = left_display_y; //rect.y + 36;
-            font_rect.w = font_w_scale_firstline * strlen(key_binding) / 3;
-            font_rect.h = font_height_firstline;
+            font_rect.w = 11 * strlen(key_binding) / 2;
+            font_rect.h = 19;
             SDL_RenderCopy(renderer, text, NULL, &font_rect);
             if (text) // TODO: remove this frequent create and destroy
                 SDL_DestroyTexture(text);
@@ -1403,41 +1405,41 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         // Show Left Title Information
         else if (is->show_info_type >= SHOW_TITLE)
         {
-            SDL_Color color = {0x00, 0xFA, 0xFF};
+            SDL_Color color = {250, 250, 250};
             SDL_Surface *surf = TTF_RenderUTF8_Blended(is->font, left_title, color);
             SDL_Texture *text = SDL_CreateTextureFromSurface(renderer, surf);
-            int left_title_width = font_w_scale_firstline * strlen(left_title) / 2;
+            int left_title_width = 13 * strlen(left_title) / 2;
             SDL_FreeSurface(surf);
             left_display_y = rect.y + 5;
             font_rect.x = rect.x + 10;
             font_rect.y = left_display_y;
             font_rect.w = left_title_width;
-            font_rect.h = font_height_firstline;
+            font_rect.h = 17;
             SDL_RenderCopy(renderer, text, NULL, &font_rect);
             if (text) // TODO: remove this frequent create and destroy
                 SDL_DestroyTexture(text);
             if(is->show_info_type >= SHOW_DETAIL)
             {
-                //surf = TTF_RenderUTF8_Blended(is->font, is->format_str, color);
-                //text = SDL_CreateTextureFromSurface(renderer, surf);
-                //SDL_FreeSurface(surf);
-                //font_rect.x = rect.x + 10 + 10 + left_title_width;
-                //font_rect.y = left_display_y;
-                //font_rect.w = font_w_scale_firstline * strlen(is->format_str) / 2;
-                //font_rect.h = font_height_firstline;
-                //SDL_RenderCopy(renderer, text, NULL, &font_rect);
-                //if (text) // TODO: remove this frequent create and destroy
-                //    SDL_DestroyTexture(text);
+                surf = TTF_RenderUTF8_Blended(is->font, is->format_str, color);
+                text = SDL_CreateTextureFromSurface(renderer, surf);
+                SDL_FreeSurface(surf);
+                font_rect.x = rect.x + 10 + 10 + left_title_width;
+                font_rect.y = left_display_y;
+                font_rect.w = 13 * strlen(is->format_str) / 2;
+                font_rect.h = 17;
+                SDL_RenderCopy(renderer, text, NULL, &font_rect);
+                if (text) // TODO: remove this frequent create and destroy
+                    SDL_DestroyTexture(text);
 
-                //color.g = color.b = 0; 
+                color.g = color.b = 0; 
                 surf = TTF_RenderUTF8_Blended(is->font, left_detail, color);
                 text = SDL_CreateTextureFromSurface(renderer, surf);
                 SDL_FreeSurface(surf);
-                left_display_y += font_height_firstline + 5;
+                left_display_y += 17;
                 font_rect.x = rect.x + 10;
                 font_rect.y = left_display_y; //rect.y + 21;
-                font_rect.w = font_w_scale_secondline * strlen(left_detail) / 2;
-                font_rect.h = font_height_secondline;
+                font_rect.w = 18 * strlen(left_detail) / 2;
+                font_rect.h = 22;
                 SDL_RenderCopy(renderer, text, NULL, &font_rect);
                 if (text) // TODO: remove this frequent create and destroy
                     SDL_DestroyTexture(text);
@@ -1447,8 +1449,11 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
 
     if (aux_is) // blend two frame and add a split line
     {
+        int aux_frame_width  = aux_vp->width == 0  ? aux_is->viddec_width :  aux_vp->width;
+        int aux_frame_height = aux_vp->height == 0 ? aux_is->viddec_height : aux_vp->height;
+
         calculate_aux_display_rect(&aux_rect, &aux_texture_rect, &disp_sp_frame_rect, &split_frame_rect, is->vert_split_pos, 
-                                   aux_is->xleft, aux_is->ytop, aux_is->width, aux_is->height, aux_vp->width, aux_vp->height, aux_vp->sar);
+                                   aux_is->xleft, aux_is->ytop, aux_is->width, aux_is->height, aux_frame_width, aux_frame_height, aux_vp->sar);
         //av_log(NULL, AV_LOG_ERROR, "leftis wxh = %dx%d, rightis wxh = %dx%d, leftvp wxh = %dx%d, rightvp wxh = %dx%d, vert_split_pos = %d, aux_rect.x = %d\n", 
         //       is->width, is->height, aux_is->width, aux_is->height, vp->width, vp->height, aux_vp->width, aux_vp->height, is->vert_split_pos, aux_rect.x);
         if (!aux_vp->uploaded)
@@ -1470,39 +1475,39 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         // Show Right Title Information
         if (is->font != NULL && is->show_info_type >= SHOW_TITLE)
         {
-            SDL_Color color = {0x00, 0xFA, 0xFF};
+            SDL_Color color = {250, 250, 250};
             SDL_Surface *surf = TTF_RenderUTF8_Blended(is->font, right_title, color);
             SDL_Texture *text = SDL_CreateTextureFromSurface(renderer, surf);
-            int right_title_width = font_w_scale_firstline * strlen(right_title) / 2;
+            int right_title_width = 13 * strlen(right_title) / 2;
             SDL_FreeSurface(surf);
             font_rect.x = aux_rect.x + 10;
             font_rect.y = aux_rect.y + 5;
             font_rect.w = right_title_width; 
-            font_rect.h = font_height_firstline;
+            font_rect.h = 17;
             SDL_RenderCopy(renderer, text, NULL, &font_rect);
             if (text) // TODO: remove this frequent create and destroy
                 SDL_DestroyTexture(text);
             if(is->show_info_type >= SHOW_DETAIL)
             {
-                //surf = TTF_RenderUTF8_Blended(is->font, aux_is->format_str, color);
-                //text = SDL_CreateTextureFromSurface(renderer, surf);
-                //SDL_FreeSurface(surf);
-                //font_rect.x = aux_rect.x + 10 + 10 + right_title_width;
-                //font_rect.y = aux_rect.y + 5;
-                //font_rect.w = font_w_scale_firstline * strlen(aux_is->format_str) / 2;
-                //font_rect.h = font_height_firstline;
-                //SDL_RenderCopy(renderer, text, NULL, &font_rect);
-                //if (text) // TODO: remove this frequent create and destroy
-                //    SDL_DestroyTexture(text);
+                surf = TTF_RenderUTF8_Blended(is->font, aux_is->format_str, color);
+                text = SDL_CreateTextureFromSurface(renderer, surf);
+                SDL_FreeSurface(surf);
+                font_rect.x = aux_rect.x + 10 + 10 + right_title_width;
+                font_rect.y = aux_rect.y + 5;
+                font_rect.w = 13 * strlen(aux_is->format_str) / 2;
+                font_rect.h = 17;
+                SDL_RenderCopy(renderer, text, NULL, &font_rect);
+                if (text) // TODO: remove this frequent create and destroy
+                    SDL_DestroyTexture(text);
 
-                //color.g = color.b = 0; 
+                color.g = color.b = 0; 
                 surf = TTF_RenderUTF8_Blended(is->font, right_detail, color);
                 text = SDL_CreateTextureFromSurface(renderer, surf);
                 SDL_FreeSurface(surf);
                 font_rect.x = aux_rect.x + 10;
-                font_rect.y = aux_rect.y + font_height_firstline + 10; //rect.y + 21;
-                font_rect.w = font_w_scale_secondline * strlen(right_detail) / 2;
-                font_rect.h = font_height_secondline;
+                font_rect.y = aux_rect.y + 22; //rect.y + 21;
+                font_rect.w = 18 * strlen(right_detail) / 2;
+                font_rect.h = 22;
                 SDL_RenderCopy(renderer, text, NULL, &font_rect);
                 if (text) // TODO: remove this frequent create and destroy
                     SDL_DestroyTexture(text);
@@ -2191,7 +2196,7 @@ retry:
             frame_queue_next(&is->pictq);
             is->force_refresh = 1;
 
-            if(aux_is) 
+            if(aux_is && frame_queue_nb_remaining(&aux_is->pictq) > 1) 
             {
                 if(is->first_pts >= 0 && aux_is->first_pts >= 0) // stream contains pts
                 {
@@ -2244,7 +2249,7 @@ display:
             video_display(is, aux_is);
     }
     is->force_refresh = 0;
-    if (show_status) {
+    if (show_status && vbv_stat < 2) {
         AVBPrint buf;
         static int64_t last_time;
         int64_t cur_time;
@@ -2812,7 +2817,9 @@ static int video_thread(void *arg)
             pts = (frame->pts == AV_NOPTS_VALUE) ? NAN : frame->pts * av_q2d(tb);
 
             if(is->first_pts < 0 && frame->pts != AV_NOPTS_VALUE)
+            {
                 is->first_pts = pts;
+            }
 
             // Note: frame is reset by av_frame_move_ref in queue_picture, so frame->pts is not valid after queue_picture
             if(scaleFrame)
@@ -3386,7 +3393,8 @@ static int read_thread(void *arg)
     AVDictionaryEntry *t;
     SDL_mutex *wait_mutex = SDL_CreateMutex();
     int scan_all_pmts_set = 0;
-    int64_t pkt_ts;
+    int64_t pkt_ts, pkt_idx = 0, tot_pkt_bits = 0;
+    double vbv_fullness_seconds = 0.0, vbv_max_fullness = -9999.0, vbv_min_fullness = 9999.0;
 
     if (!wait_mutex) {
         av_log(NULL, AV_LOG_FATAL, "SDL_CreateMutex(): %s\n", SDL_GetError());
@@ -3547,6 +3555,9 @@ static int read_thread(void *arg)
 
     if (infinite_buffer < 0 && is->realtime)
         infinite_buffer = 1;
+    
+    if(is->ic->bit_rate > 0 && vbv_bitrate == 1) // vbv_bitrate not set 
+        vbv_bitrate = is->ic->bit_rate;
 
     for (;;) {
         if (is->abort_request)
@@ -3666,7 +3677,8 @@ static int read_thread(void *arg)
                 (double)(start_time != AV_NOPTS_VALUE ? start_time : 0) / 1000000
                 <= ((double)duration / 1000000);
         if (pkt->stream_index == is->audio_stream && pkt_in_play_range) {
-            packet_queue_put(&is->audioq, pkt);
+            if(vbv_stat < 2)
+                packet_queue_put(&is->audioq, pkt);
         } else if (pkt->stream_index == is->video_stream && pkt_in_play_range
                    && !(is->video_st->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
 
@@ -3674,8 +3686,26 @@ static int read_thread(void *arg)
             p->pts = pkt_ts;
             p->pkt_size = pkt->size;
             PushSampleList(&is->sampleHeader, p);
-
-            packet_queue_put(&is->videoq, pkt);
+            if(vbv_stat)
+            {
+                pkt_idx++;
+                is->vbv_fullness += (vbv_bitrate / (int)is->frame_rate);
+                is->vbv_fullness -= (p->pkt_size * 8);
+                tot_pkt_bits += (p->pkt_size * 8);
+                vbv_fullness_seconds = (double)is->vbv_fullness / vbv_bitrate;
+                vbv_max_fullness = vbv_max_fullness < vbv_fullness_seconds ? vbv_fullness_seconds : vbv_max_fullness;
+                vbv_min_fullness = vbv_min_fullness > vbv_fullness_seconds ? vbv_fullness_seconds : vbv_min_fullness;
+                p->vbv_max_sub_min = 1000 * (vbv_max_fullness - vbv_min_fullness);
+                if(vbv_stat == 2)
+                {
+                    printf("Video Packet %4lld: %8d bits, avg_bitrate %6lld kbps, vbv_fullness = %8d bits(%7.2f ms), vbv max-min = %6.2f ms\n",
+                           pkt_idx, p->pkt_size * 8, tot_pkt_bits / (1000 * pkt_idx / (int)is->frame_rate), is->vbv_fullness,
+                           1000 * vbv_fullness_seconds, p->vbv_max_sub_min);
+                    fflush(stdout);
+                }
+            }
+            if(vbv_stat < 2)
+                packet_queue_put(&is->videoq, pkt);
         } else if (pkt->stream_index == is->subtitle_stream && pkt_in_play_range) {
             packet_queue_put(&is->subtitleq, pkt);
         } else {
@@ -3843,6 +3873,54 @@ static void toggle_full_screen(VideoState *is)
 {
     is_full_screen = !is_full_screen;
     SDL_SetWindowFullscreen(window, is_full_screen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    if(!is_full_screen)  // change fullscreen to org picture size
+    {
+        // keep cursor position unchanged relative to picture
+        int cursor_x = 0, cursor_y = 0;
+        int winpos_x = 0, winpos_y = 0;
+        SDL_GetGlobalMouseState(&cursor_x, &cursor_y);
+        winpos_x = cursor_x - cursor_x * is->viddec_width / is->width;   // is->width  means screen width
+        winpos_y = cursor_y - cursor_y * is->viddec_height / is->height; // is->height means screen height 
+        SDL_SetWindowSize(window, is->viddec_width, is->viddec_height);
+        //SDL_SetWindowPosition(window, screen_left, screen_top);
+        SDL_SetWindowPosition(window, winpos_x, winpos_y);
+    }
+}
+
+static void play_window_scale(VideoState *is, int wheel_y)
+{
+    if (!is_full_screen)
+    {
+        // keep cursor position unchanged relative to picture
+        double scale_factor = 1.05;
+        int cursor_x = 0, cursor_y = 0;
+        int curwin_w = 1, curwin_h = 1, curwin_x = 0, curwin_y = 0;
+        int newwin_w = 1, newwin_h = 1, newwin_x = 0, newwin_y = 0;
+        SDL_GetWindowSize(window, &curwin_w, &curwin_h);
+        SDL_GetWindowPosition(window, &curwin_x, &curwin_y);
+        SDL_GetGlobalMouseState(&cursor_x, &cursor_y);
+        if(curwin_w > 4000)
+            scale_factor = 1.2;
+        if(curwin_w / is->viddec_width > 2 && wheel_y > 0 ||
+           is->viddec_width / curwin_w > 8 && wheel_y < 0)  // playwindow is already too large or too small
+            return;
+        if (wheel_y > 0) // scale up
+        {
+            newwin_w = curwin_w * scale_factor;
+            newwin_h = curwin_h * scale_factor;
+        }
+        else if (wheel_y < 0) // scale down
+        {
+            newwin_w = curwin_w / scale_factor;
+            newwin_h = curwin_h / scale_factor;
+        }
+        newwin_x = cursor_x - (cursor_x - curwin_x) * newwin_w / curwin_w;
+        newwin_y = cursor_y - (cursor_y - curwin_y) * newwin_h / curwin_h;
+        SDL_SetWindowPosition(window, newwin_x, newwin_y);
+        SDL_SetWindowSize(window, newwin_w, newwin_h);
+        //printf("Window Size scaled to %d x %d\n", newwin_w, newwin_h);
+        //fflush(stdout);
+    }
 }
 
 static void toggle_audio_display(VideoState *is)
@@ -3908,7 +3986,10 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
     double incr, pos, frac;
     int mouse_action = 0; // 0 - seek, 1 - reset vert split position; other value - do nothing
     Frame *vp, *lastvp, *auxvp, *auxlastvp;
-    cur_stream->left_mouse_bt_stat = 0; // button up
+    static int last_cursor_x = 0, bt_down_cursor_x = 0, bt_up_cursor_x = 0;
+    static int last_cursor_y = 0, bt_down_cursor_y = 0, bt_up_cursor_y = 0;
+    cur_stream->left_mouse_bt_stat  = 0;  // button up
+    cur_stream->right_mouse_bt_stat = 0; // button up
     cur_stream->delay_frame_num = 0;
     if(auxlilary_stream)
         auxlilary_stream->delay_frame_num = 0;
@@ -3935,7 +4016,7 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
             case SDLK_p:
             case SDLK_SPACE:
                 toggle_pause(cur_stream);
-                if(auxlilary_stream)
+                if(auxlilary_stream && frame_queue_nb_remaining(&auxlilary_stream->pictq) > 1)
                 {
                     double last_duration = 0.0, aux_duration = 0.0;
                     double auxvp_rela_pts;
@@ -3954,7 +4035,7 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
                     {
                         vp    = frame_queue_peek(&cur_stream->pictq);
                         auxvp = frame_queue_peek(&auxlilary_stream->pictq);
-                        if(auxlilary_stream->first_pts >= 0 && cur_stream->delay_frame_num >= 0)
+                        if(cur_stream->first_pts >= 0 && auxlilary_stream->first_pts >= 0 && cur_stream->delay_frame_num >= 0)
                         {
                             auxvp_rela_pts = auxvp->pts - auxlilary_stream->first_pts + auxlilary_stream->delay_frame_num * aux_duration;
                             vp_rela_pts = vp->pts - cur_stream->first_pts + cur_stream->delay_frame_num * last_duration; 
@@ -4118,7 +4199,7 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
                                 pos = frame_queue_last_pos(&auxlilary_stream->pictq);
                             if (pos < 0 && auxlilary_stream->audio_stream >= 0)
                                 pos = frame_queue_last_pos(&auxlilary_stream->sampq);
-                            if (pos < 0)
+                            if (pos < 0) // means auxlilary stream eof
                                 pos = avio_tell(auxlilary_stream->ic->pb);
                             if (auxlilary_stream->ic->bit_rate)
                                 incr *= auxlilary_stream->ic->bit_rate / 8.0;
@@ -4146,9 +4227,61 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
             break;
 
         case SDL_MOUSEBUTTONUP:
+            SDL_GetGlobalMouseState(&bt_up_cursor_x, &bt_up_cursor_y);
             if (event.button.button == SDL_BUTTON_LEFT)
             {
+                SDL_SetCursor(arrow_cursor);
                 cur_stream->left_mouse_bt_stat = 0; // record left mouse button stat
+                break;
+            }
+            else if(event.button.button == SDL_BUTTON_RIGHT)
+            {
+                SDL_SetCursor(arrow_cursor);
+                cur_stream->right_mouse_bt_stat = 0;
+                if(bt_up_cursor_x == bt_down_cursor_x && bt_up_cursor_y == bt_down_cursor_y) // just press right button and up, to proceed seek
+                {
+                    x = event.motion.x;
+                    if (seek_by_bytes || cur_stream->ic->duration <= 0) 
+                    {
+                        if(!auxlilary_stream)  // for compare mode, don't support right click seek
+                        {
+                            uint64_t size = avio_size(cur_stream->ic->pb);
+                            stream_seek(cur_stream, size * x / cur_stream->width, 0, 1);
+                            //if (auxlilary_stream)
+                            //{
+                            //    size = avio_size(auxlilary_stream->ic->pb);
+                            //    stream_seek(auxlilary_stream, size * x / auxlilary_stream->width, 0, 1);
+                            //}
+                        }
+                    }
+                    else
+                    {
+                        int64_t ts;
+                        int ns, hh, mm, ss;
+                        int tns, thh, tmm, tss;
+                        int64_t total_duration = cur_stream->ic->duration;
+                        if(auxlilary_stream)
+                            total_duration = total_duration > auxlilary_stream->ic->duration ? auxlilary_stream->ic->duration : total_duration;
+                        tns = total_duration / 1000000LL;
+                        thh = tns / 3600;
+                        tmm = (tns % 3600) / 60;
+                        tss = (tns % 60);
+                        frac = x / cur_stream->width;
+                        ns = frac * tns;
+                        hh = ns / 3600;
+                        mm = (ns % 3600) / 60;
+                        ss = (ns % 60);
+                        av_log(NULL, AV_LOG_INFO,
+                               "Seek to %2.0f%% (%2d:%02d:%02d) of total duration (%2d:%02d:%02d)       \n", frac * 100,
+                               hh, mm, ss, thh, tmm, tss);
+                        ts = frac * cur_stream->ic->duration;
+                        if (cur_stream->ic->start_time != AV_NOPTS_VALUE)
+                            ts += cur_stream->ic->start_time;
+                        stream_seek(cur_stream, ts, 0, 0);
+                        if (auxlilary_stream)
+                            stream_seek(auxlilary_stream, ts, 0, 0);
+                    }
+                }
                 break;
             }
 
@@ -4159,16 +4292,25 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
                     do_exit(auxlilary_stream);
                 break;
             }
+            SDL_GetGlobalMouseState(&last_cursor_x, &last_cursor_y);
             if (event.button.button == SDL_BUTTON_LEFT) {
                 cur_stream->left_mouse_bt_stat = 1;
-                //static int64_t last_mouse_left_click = 0;
-                //if (av_gettime_relative() - last_mouse_left_click <= 500000) {
-                //    toggle_full_screen(cur_stream);
-                //    cur_stream->force_refresh = 1;
-                //    last_mouse_left_click = 0;
-                //} else {
-                //    last_mouse_left_click = av_gettime_relative();
-                //}
+                // quick double left click to toggle full screen
+                static int64_t last_mouse_left_click = 0;
+                if (av_gettime_relative() - last_mouse_left_click <= 300000) {
+                    toggle_full_screen(cur_stream);
+                    cur_stream->force_refresh = 1;
+                    last_mouse_left_click = 0;
+                } else {
+                    last_mouse_left_click = av_gettime_relative();
+                }
+            }
+            else if(event.button.button == SDL_BUTTON_RIGHT)
+            {
+                cur_stream->right_mouse_bt_stat = 1;
+                bt_down_cursor_x = last_cursor_x;
+                bt_down_cursor_y = last_cursor_y;
+                SDL_SetCursor(hand_cursor);
             }
         case SDL_MOUSEMOTION:
             if (cursor_hidden) {
@@ -4187,11 +4329,14 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
                 //    break;
                 if (cur_stream->left_mouse_bt_stat == 1)
                     mouse_action = 1; // if left mouse button down and mouse move, then move the vertical split line
+                else if (cur_stream->right_mouse_bt_stat == 1)
+                    mouse_action = 0; // if left mouse button down and mouse move, then move the vertical split line
                 else
                     mouse_action = -1; // do nothing
                 x = event.motion.x;
+                //printf("mouse motion: x = %f\n", x);
             }
-            if(mouse_action == 0) // proceed seek mouse_action
+            if(mouse_action == 0 && cur_stream->right_mouse_bt_stat == 0) // proceed seek mouse_action
             {
                 if (seek_by_bytes || cur_stream->ic->duration <= 0) {
                     uint64_t size =  avio_size(cur_stream->ic->pb);
@@ -4201,6 +4346,7 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
                         size = avio_size(auxlilary_stream->ic->pb);
                         stream_seek(auxlilary_stream, size * x / auxlilary_stream->width, 0, 1);
                     }
+                    printf("SDM_MouseMotion: SizeSeek to %f\n", size*x/cur_stream->width);
                 } else {
                     int64_t ts;
                     int ns, hh, mm, ss;
@@ -4223,7 +4369,21 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
                     stream_seek(cur_stream, ts, 0, 0);
                     if (auxlilary_stream)
                         stream_seek(auxlilary_stream, ts, 0, 0);
+                    printf("SDM_MouseMotion: TimeSeek to %d:%d:%d:%d\n", ns, hh, mm, ss);
                 }
+            }
+            else if(mouse_action == 0 && cur_stream->right_mouse_bt_stat == 1 || (!auxlilary_stream && cur_stream->left_mouse_bt_stat == 1)) // move window
+            {
+                int cur_x, cur_y;
+                SDL_SetCursor(hand_cursor);
+                SDL_GetGlobalMouseState(&cur_x, &cur_y);
+                int delta_x = cur_x - last_cursor_x;
+                int delta_y = cur_y - last_cursor_y;
+                int px, py;
+                SDL_GetWindowPosition(window, &px, &py);
+                SDL_SetWindowPosition(window, px + delta_x, py + delta_y);
+                last_cursor_x = cur_x;
+                last_cursor_y = cur_y;
             }
             else if (mouse_action == 1) // reset vert split position
             {
@@ -4231,6 +4391,9 @@ static void event_loop(VideoState *cur_stream,  VideoState *auxlilary_stream)
                 cur_stream->vert_split_pos = x / cur_stream->width * cur_stream->scaleto_width;
                 video_display(cur_stream, auxlilary_stream);
             }
+            break;
+        case SDL_MOUSEWHEEL:  // window scale if not full screen
+            play_window_scale(cur_stream, event.wheel.y);
             break;
         case SDL_WINDOWEVENT:
             switch (event.window.event) {
@@ -4410,6 +4573,8 @@ static const OptionDef options[] = {
     { "exitonkeydown", OPT_BOOL | OPT_EXPERT, { &exit_on_keydown }, "exit on key down", "" },
     { "exitonmousedown", OPT_BOOL | OPT_EXPERT, { &exit_on_mousedown }, "exit on mouse down", "" },
     { "loop", OPT_INT | HAS_ARG | OPT_EXPERT, { &loop }, "set number of times the playback shall be looped", "loop count" },
+    { "vbvstat", OPT_INT | HAS_ARG | OPT_EXPERT, { &vbv_stat}, "1: enable vbv stat; 2: enable fast vbv stat and disable play", "vbv"},
+    { "vbvbitrate", OPT_INT | HAS_ARG | OPT_EXPERT, { &vbv_bitrate}, "set vbv bitrate in bps", "bps"},
     { "framedrop", OPT_BOOL | OPT_EXPERT, { &framedrop }, "drop frames when cpu is too slow", "" },
     { "infbuf", OPT_BOOL | OPT_EXPERT, { &infinite_buffer }, "don't limit the input buffer size (useful with realtime streams)", "" },
     { "window_title", OPT_STRING | HAS_ARG, { &window_title }, "set window title", "window title" },
@@ -4436,14 +4601,21 @@ static const OptionDef options[] = {
 
 static void show_usage(void)
 {
-    printf("Video Compare Tool Based on ffplay, version 1.0.%d.%d(Support AVS2).\n\n", ver_major, ver_minor);
-    printf("Usage: %s  input_file1  input_file2  [-loop 3]  [-m]\n\n", program_name);
-    printf("Options:\n");
-    printf("       -loop N[integer]   loop play N times\n");
-    printf("       -m                 auto move split line\n\n");
-    printf("While playing:\n");
+    printf("Video Compare Tool Based on ffplay, version 1.0.%d.%d. Support avs3\n", ver_major, ver_minor);
+    printf("Usage Method 1: Select two video files and drag them over VCmpTool.exe\n\n");
+    printf("Usage Method 2: Run program in cmd(\"C:\\Windows\\system32\\cmd.exe\")\n\n");
+    printf("   Command: %s  input_file1  input_file2  [OPTION]\n", program_name);
+    printf("\nOPTION:\n");
+    printf("   -loop N[integer]        loop play N times\n");
+    printf("   -m                      auto move split line\n");
+    printf("   -vbvstat N[integer]     show packet bits and vbv buffer status and etc.\n");
+    printf("                           - 0: disable vbv stat;\n");
+    printf("                           - 1: enable normal vbv stat;\n");
+    printf("                           - 2: enable fast vbv stat(disable play). default 0\n");
+    printf("   -vbvbitrate N[integer]  set vbv bitrate in bps, useful if vbv_stat = 1 or 2.\n");
+    printf("\nWhile playing:\n");
     printf("       q, ESC              quit\n");
-    printf("       f                   toggle full screen\n");
+    printf("       f, double click     toggle full screen\n");
     printf("       p, SPC              pause\n");
     printf("       s                   step forward one frame for all inputs\n");
     printf("       F1                  step forward one frame for the left file\n");
@@ -4453,8 +4625,10 @@ static void show_usage(void)
     printf("       down/up             seek backward/forward 1 minute\n");
     printf("       left  mouse click   move the vertical split line\n");
     printf("       left  mouse down    split line move following mouse position\n");
+    printf("       left mouse press    move play window for not full screen mode\n");
+    printf("       right mouse press   move play window for not full screen mode\n");
+    printf("       scroll mouse wheel  scale play window\n");
     printf("Report bug to lirizkd@qq.com.\n");
-    printf("\n");
 }
 
 void show_help_default(const char *opt, const char *arg)
@@ -4562,6 +4736,8 @@ int main(int argc, char **argv)
 
     SDL_EventState(SDL_SYSWMEVENT, SDL_IGNORE);
     SDL_EventState(SDL_USEREVENT, SDL_IGNORE);
+    hand_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+    arrow_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
 
     TTF_Init();
 
@@ -4604,9 +4780,9 @@ int main(int argc, char **argv)
     for(i = 0; i < 4; i++)
     {
 #ifdef _WIN32 
-        is->font = TTF_OpenFont(localeToUTF8(font_dir[i]), 80);
+        is->font = TTF_OpenFont(localeToUTF8(font_dir[i]), 50);
 #else
-        is->font = TTF_OpenFont(font_dir[i], 80);
+        is->font = TTF_OpenFont(font_dir[i], 40);
 #endif
         if(is->font != NULL)
             break;
@@ -4673,9 +4849,10 @@ int main(int argc, char **argv)
 
     if(is->font != NULL)
         TTF_CloseFont(is->font);
+    SDL_FreeCursor(hand_cursor);
+    SDL_FreeCursor(arrow_cursor);
     CleanSampleList(&is->sampleHeader);
     if(is2)
         CleanSampleList(&is2->sampleHeader);
-
     return 0;
 }
