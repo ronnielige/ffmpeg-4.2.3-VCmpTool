@@ -1218,7 +1218,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
         is->last_disp_frames_tot_bits = is->disp_frames_tot_bits;
     }
     //sprintf(left_detail + strlen(left_detail), "  es_bitrate: %06d kbps, max %06d kbps, avg %06d kbps", main_bitrate_interval, max_main_bitrate, avg_main_bitrate);
-    sprintf(left_detail + strlen(left_detail), "码率: %06d kbps", main_bitrate_interval);
+    sprintf(left_detail + strlen(left_detail), "码率: %04d kbps", main_bitrate_interval);
 
     if(aux_is)
     {
@@ -1241,7 +1241,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             aux_is->last_disp_frames_tot_bits = aux_is->disp_frames_tot_bits;
         }
         //sprintf(right_detail + strlen(right_detail), "  es_bitrate: %06d kbps, max %06d kbps, avg %06d kbps", aux_bitrate_interval, max_aux_bitrate, avg_aux_bitrate);
-        sprintf(right_detail + strlen(right_detail), "码率: %06d kbps", aux_bitrate_interval);
+        sprintf(right_detail + strlen(right_detail), "码率: %04d kbps", aux_bitrate_interval);
 
         // set window title to show played time for each file
         if(!isnan(vp->pts) && !isnan(aux_vp->pts)) // raw bitstream may have no pts
