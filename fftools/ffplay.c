@@ -1368,6 +1368,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
     SDL_RenderCopyEx(renderer, is->vid_texture, NULL, &rect, 0, NULL, vp->flip_v ? SDL_FLIP_VERTICAL : 0);
     set_sdl_yuv_conversion_mode(NULL);
 
+    int display_y_offset = 110;
     if(is->font != NULL)
     {
         int left_display_y = 0;
@@ -1379,7 +1380,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             SDL_Surface *surf = TTF_RenderUTF8_Blended(is->font, hint_line, color);
             SDL_Texture *text = SDL_CreateTextureFromSurface(renderer, surf);
             SDL_FreeSurface(surf);
-            left_display_y = rect.y + 5;
+            left_display_y = rect.y + display_y_offset;
             font_rect.x = rect.x + 10;
             font_rect.y = left_display_y;
             font_rect.w = font_w_scale_firstline * strlen(hint_line) / 3;
@@ -1408,7 +1409,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             SDL_Texture *text = SDL_CreateTextureFromSurface(renderer, surf);
             int left_title_width = font_w_scale_firstline * strlen(left_title) / 2;
             SDL_FreeSurface(surf);
-            left_display_y = rect.y + 5;
+            left_display_y = rect.y + display_y_offset;
             font_rect.x = rect.x + 10;
             font_rect.y = left_display_y;
             font_rect.w = left_title_width;
@@ -1433,7 +1434,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 surf = TTF_RenderUTF8_Blended(is->font, left_detail, color);
                 text = SDL_CreateTextureFromSurface(renderer, surf);
                 SDL_FreeSurface(surf);
-                left_display_y += font_height_firstline + 5;
+                left_display_y += font_height_firstline ;
                 font_rect.x = rect.x + 10;
                 font_rect.y = left_display_y; //rect.y + 21;
                 font_rect.w = font_w_scale_secondline * strlen(left_detail) / 2;
@@ -1476,7 +1477,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
             int right_title_width = font_w_scale_firstline * strlen(right_title) / 2;
             SDL_FreeSurface(surf);
             font_rect.x = aux_rect.x + 10;
-            font_rect.y = aux_rect.y + 5;
+            font_rect.y = aux_rect.y + display_y_offset;
             font_rect.w = right_title_width; 
             font_rect.h = font_height_firstline;
             SDL_RenderCopy(renderer, text, NULL, &font_rect);
@@ -1500,7 +1501,7 @@ static void video_image_display(VideoState *is, VideoState *aux_is)
                 text = SDL_CreateTextureFromSurface(renderer, surf);
                 SDL_FreeSurface(surf);
                 font_rect.x = aux_rect.x + 10;
-                font_rect.y = aux_rect.y + font_height_firstline + 10; //rect.y + 21;
+                font_rect.y = aux_rect.y + font_height_firstline + display_y_offset; //rect.y + 21;
                 font_rect.w = font_w_scale_secondline * strlen(right_detail) / 2;
                 font_rect.h = font_height_secondline;
                 SDL_RenderCopy(renderer, text, NULL, &font_rect);
