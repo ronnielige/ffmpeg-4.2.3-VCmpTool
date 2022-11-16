@@ -390,6 +390,8 @@ static int autoexit;
 static int exit_on_keydown;
 static int exit_on_mousedown;
 static int loop = 1;
+static int global_loop_cnt = 0;
+static int input_file_num = 0;
 static int framedrop = -1;
 static int infinite_buffer = -1;
 static enum ShowMode show_mode = SHOW_MODE_NONE;
@@ -420,6 +422,7 @@ static SDL_Window *window;
 static SDL_Renderer *renderer;
 static SDL_RendererInfo renderer_info = {0};
 static SDL_AudioDeviceID audio_dev;
+static SDL_mutex *g_mutex;
 
 static const struct TextureFormatEntry {
     enum AVPixelFormat format;
@@ -3388,6 +3391,7 @@ static int read_thread(void *arg)
     SDL_mutex *wait_mutex = SDL_CreateMutex();
     int scan_all_pmts_set = 0;
     int64_t pkt_ts;
+    int local_loop_cnt = 0;
 
     if (!wait_mutex) {
         av_log(NULL, AV_LOG_FATAL, "SDL_CreateMutex(): %s\n", SDL_GetError());
@@ -3628,16 +3632,31 @@ static int read_thread(void *arg)
             SDL_UnlockMutex(wait_mutex);
             continue;
         }
+
+        SDL_LockMutex(g_mutex);
+        if(input_file_num * local_loop_cnt < global_loop_cnt) // Means loop occured at other file, current file need force loop then
+        {
+            stream_seek(is, start_time != AV_NOPTS_VALUE ? start_time : 0, 0, 0);
+            global_loop_cnt++;
+            local_loop_cnt++;
+            av_log(NULL, AV_LOG_FATAL, "Loop occur, Force loop, global_loop_start = %d, local_loop_cnt = %d\n", global_loop_cnt, local_loop_cnt);
+        }
         if (!is->paused &&
             (!is->audio_st || (is->auddec.finished == is->audioq.serial && frame_queue_nb_remaining(&is->sampq) == 0)) &&
             (!is->video_st || (is->viddec.finished == is->videoq.serial && frame_queue_nb_remaining(&is->pictq) == 0))) {
             if (loop != 1 && (!loop || --loop)) {
                 stream_seek(is, start_time != AV_NOPTS_VALUE ? start_time : 0, 0, 0);
+                local_loop_cnt++;
+                global_loop_cnt++;
+                av_log(NULL, AV_LOG_FATAL, "Loop occur, global_loop_start = %d, local_loop_cnt = %d\n", global_loop_cnt, local_loop_cnt);
             } else if (autoexit) {
                 ret = AVERROR_EOF;
+                SDL_UnlockMutex(g_mutex);
                 goto fail;
             }
         }
+        SDL_UnlockMutex(g_mutex);
+
         ret = av_read_frame(ic, pkt);
         if (ret < 0) {
             if ((ret == AVERROR_EOF || avio_feof(ic->pb)) && !is->eof) {
@@ -4511,6 +4530,11 @@ int main(int argc, char **argv)
                             "C:\\Windows\\Fonts\\simsunb.ttf",
                             "C:\\Windows\\Fonts\\simfang.ttf"
                             };
+    g_mutex = SDL_CreateMutex();
+    if (!g_mutex) {
+        av_log(NULL, AV_LOG_FATAL, "SDL_CreateMutex(): %s\n", SDL_GetError());
+        return 0;
+    }
 
     init_dynload();
 
@@ -4601,6 +4625,7 @@ int main(int argc, char **argv)
     }
 
     is = stream_open(input_filename[0], file_iformat);
+    input_file_num++;
 
     for(i = 0; i < 4; i++)
     {
@@ -4660,6 +4685,7 @@ int main(int argc, char **argv)
             av_frame_get_buffer(is->splitline_frame, 32);
             init_split_frame(is->splitline_frame);
         }
+        input_file_num++;
     }
 
     
@@ -4678,5 +4704,6 @@ int main(int argc, char **argv)
     if(is2)
         CleanSampleList(&is2->sampleHeader);
 
+    SDL_DestroyMutex(g_mutex);
     return 0;
 }
